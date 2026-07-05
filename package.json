@@ -22,6 +22,7 @@
   "exports": {
     ".": "./src/index.js",
     "./node": "./src/node.js",
+    "./koa": "./src/koa.js",
     "./*": "./src/*"
   },
   "scripts": {
@@ -53,6 +54,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.1.0",
+    "koa": "^3.2.1",
     "prettier": "^3.9.4",
     "tape-six": "^1.13.0",
     "typescript": "^6.0.3"

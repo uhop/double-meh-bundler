@@ -28,6 +28,8 @@ import {toNodeHandler} from 'double-meh-bundler/node';
 
 createServer(toNodeHandler(createBundler({isUrlAcceptable}))).listen(3000);
 // Express: app.put('/bundle', toNodeHandler(createBundler({isUrlAcceptable})));
+// Koa:     import {toKoaMiddleware} from 'double-meh-bundler/koa';
+//          app.use(route.put('/bundle', toKoaMiddleware(createBundler({isUrlAcceptable}))));
 ```
 
 The client side is [double-meh](https://github.com/uhop/double-meh)'s `io.bundle` — transparent batching with per-URL caching, ETag/304 revalidation, and error granularity intact. The wire format (v1) is deliberately library-independent: `application/vnd.double-meh.bundle{-request}+json` envelopes, id-correlated parts echoing their URLs, per-part conditional headers, outer-request auth/cookie propagation, synthetic parts for bundler-side failures, and binary parts riding base64 sorted last to preserve compression locality.
