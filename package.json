@@ -33,8 +33,6 @@
     "lint:fix": "prettier --write .",
     "wiki:index": "wiki-search-index --wiki wiki --repo uhop/double-meh-bundler --file README.md"
   },
-  "llms": "https://raw.githubusercontent.com/uhop/double-meh-bundler/main/llms.txt",
-  "llmsFull": "https://raw.githubusercontent.com/uhop/double-meh-bundler/main/llms-full.txt",
   "keywords": [
     "http",
     "bundler",
