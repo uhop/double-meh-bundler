@@ -1,0 +1,65 @@
+# double-meh-bundler
+
+> Server side of the double-meh bundle protocol: accepts one bundled request (many GETs in one PUT), fans out to backend services, returns all responses in a single compressed envelope. The core is a web-standard fetch handler `(Request) => Promise<Response>`; framework adapters are thin, dependency-free subpaths. Zero runtime dependencies, ESM-only, Node >= 18 / Bun / Deno; the core also runs in service workers and edge runtimes.
+
+## Install
+
+```bash
+npm i double-meh-bundler
+```
+
+## Core (`double-meh-bundler`)
+
+```js
+import {createBundler} from 'double-meh-bundler';
+
+const bundler = createBundler({
+  isUrlAcceptable: url => url.startsWith('/api/'), // required — the security boundary
+  resolveUrl: url => new URL(url, 'http://api.internal:8080').href
+});
+
+Bun.serve({fetch: bundler}); // or Deno.serve(bundler), or any Request → Response host
+```
+
+`createBundler(options)` → fetch handler. Options:
+
+- `isUrlAcceptable(url, request)` — required allow-list; unacceptable parts become synthetic 403 parts.
+- `resolveUrl(url)` — maps public part URLs to internal ones; default identity.
+- `fetch(request)` — injectable upstream fetch; default `globalThis.fetch`.
+- `maxRequests` — parts cap per bundle (400 above it); default 20.
+- `partTimeout` — per-part upstream timeout in ms; a hung upstream becomes a synthetic 504 part; default 10000.
+
+## Node/Express adapter (`double-meh-bundler/node.js`)
+
+```js
+import {createServer} from 'node:http';
+import {createBundler} from 'double-meh-bundler';
+import {toNodeHandler} from 'double-meh-bundler/node.js';
+
+createServer(toNodeHandler(createBundler({isUrlAcceptable}))).listen(3000);
+// Express: app.put('/bundle', toNodeHandler(createBundler({isUrlAcceptable})));
+```
+
+`toNodeHandler(handler, {compress = true})` → `(req, res, next?)`. Duck-typed: covers bare `node:http` and Express (no framework imports). Gzips the envelope when the client accepts it. Errors go to `next` when present, else 500 problem+json.
+
+## Koa adapter (`double-meh-bundler/koa.js`)
+
+```js
+import {toKoaMiddleware} from 'double-meh-bundler/koa.js';
+
+app.use(route.put('/bundle', toKoaMiddleware(createBundler({isUrlAcceptable}))));
+```
+
+`toKoaMiddleware(handler)` → `(ctx)`. Terminal middleware (never calls `next`); mount it on the bundle route. Put `koa-compress` in front to compress the envelope.
+
+## Wire format (v1)
+
+- Request: `application/vnd.double-meh.bundle-request+json`, body `{v: 1, parts: [{id, url, method?: 'GET', headers?}]}`; part headers whitelist: `accept`, `accept-language`, `if-none-match`, `if-modified-since`; auth/cookies propagate from the outer request only.
+- Response: `application/vnd.double-meh.bundle+json`, body `{v: 1, parts: [{id?, url, status, headers, body?, encoding?, synthetic?}]}`; JSON bodies inline, text as strings, binary as base64 (`encoding: "base64"`) sorted last; 204/304 parts carry no body; per-part failures are `synthetic: true` parts (403 unacceptable, 502 upstream failure, 504 timeout, 405 non-GET); the outer envelope is `Cache-Control: no-store`.
+- Constants exported: `REQUEST_MIME`, `BUNDLE_MIME`.
+
+## Docs
+
+- Wiki: https://github.com/uhop/double-meh-bundler/wiki
+- Client side: https://github.com/uhop/double-meh (its `io.bundle` service)
+- Full API: llms-full.txt

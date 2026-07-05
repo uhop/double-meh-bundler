@@ -21,8 +21,6 @@
   "types": "./src/index.d.ts",
   "exports": {
     ".": "./src/index.js",
-    "./node": "./src/node.js",
-    "./koa": "./src/koa.js",
     "./*": "./src/*"
   },
   "scripts": {
@@ -32,8 +30,11 @@
     "ts-check": "tsc --noEmit",
     "js-check": "tsc --project tsconfig.check.json",
     "lint": "prettier --check .",
-    "lint:fix": "prettier --write ."
+    "lint:fix": "prettier --write .",
+    "wiki:index": "wiki-search-index --wiki wiki --repo uhop/double-meh-bundler --file README.md"
   },
+  "llms": "https://raw.githubusercontent.com/uhop/double-meh-bundler/main/llms.txt",
+  "llmsFull": "https://raw.githubusercontent.com/uhop/double-meh-bundler/main/llms-full.txt",
   "keywords": [
     "http",
     "bundler",
@@ -45,7 +46,9 @@
   "files": [
     "src",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "llms.txt",
+    "llms-full.txt"
   ],
   "tape6": {
     "tests": [
@@ -57,6 +60,7 @@
     "koa": "^3.2.1",
     "prettier": "^3.9.4",
     "tape-six": "^1.13.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "wiki-search-index": "^0.2.0"
   }
 }

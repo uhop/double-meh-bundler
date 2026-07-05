@@ -18,7 +18,7 @@ export interface BundlerOptions {
 
 /**
  * Creates the bundler as a web-standard fetch handler: usable directly with `Bun.serve`,
- * `Deno.serve`, service workers, and web-handler frameworks; see `double-meh-bundler/node`
+ * `Deno.serve`, service workers, and web-handler frameworks; see `double-meh-bundler/node.js`
  * for the `node:http`/Express adapter.
  */
 export declare function createBundler(options: BundlerOptions): FetchHandler;

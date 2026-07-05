@@ -1,0 +1,114 @@
+# double-meh-bundler — full reference
+
+> Server side of the double-meh bundle protocol. One bundled request in (many GETs as one PUT), one enveloped response out. Web-standard fetch-handler core; dependency-free duck-typed adapters. Zero runtime dependencies. ESM-only. Node >= 18 (code floor: web-standard `fetch`/`Request`/`Response` globals), Bun, Deno; the core runs anywhere a fetch handler does (service workers, edge runtimes).
+
+## Why bundle
+
+- Compression locality: many small JSON responses share one compression window (~40–48% fewer bytes measured on bursts of small responses; ~16–22% on medium).
+- Cross-origin aggregation: one bundler origin fans out to any backend service — HTTP/2 multiplexing is per-origin and cannot do this.
+- h1 paths: over HTTP/1.1 (still the norm for origins behind no edge) bundling also recovers the connection-cap win.
+
+The client (double-meh's `io.bundle`) keeps per-request semantics intact: per-URL caching, ETag/304 revalidation, retry, and error granularity all survive bundling.
+
+## Module: double-meh-bundler (src/index.js)
+
+Platform-pure — no `node:` imports; runs in service workers and edge runtimes unchanged.
+
+### createBundler(options) → (request: Request) => Promise<Response>
+
+Options (`BundlerOptions`):
+
+- `isUrlAcceptable: (url: string, request: Request) => boolean` — REQUIRED, no default; the constructor throws a TypeError without it. The allow-list is the security boundary: a part with an unacceptable URL becomes a synthetic 403 part, the bundle proceeds.
+- `resolveUrl?: (url: string) => string` — maps public part URLs to internal ones (e.g. `/api/x` → `http://api.internal:8080/api/x`). Default: identity. The result resolves against the bundler request's own URL, so relative outputs work.
+- `fetch?: (request: Request) => Response | Promise<Response>` — the upstream fetch. Default `globalThis.fetch`. Inject for tests, mocks, or in-process serving.
+- `maxRequests?: number` — hard cap on parts per bundle; above it the whole request is refused with 400 problem+json. Default 20.
+- `partTimeout?: number` — per-part upstream timeout (ms). Implemented as an explicit race (works even when the injected upstream ignores AbortSignals); a timed-out part becomes a synthetic 504 part. Default 10000.
+
+Handler behavior:
+
+- Methods: PUT and POST accepted; anything else → 405 with `Allow: PUT, POST`.
+- Body must parse as JSON with `{v: 1, parts: []}` — otherwise 400 problem+json (`malformed bundle request body` / `not a v1 bundle request`).
+- Empty `parts` → valid no-op: `{v: 1, parts: []}`.
+- Sub-requests: GET only (non-GET parts → synthetic 405 part); headers from the part's whitelist (`accept`, `accept-language`, `if-none-match`, `if-modified-since`, case-insensitive) plus `authorization`/`cookie` propagated from the outer request; `redirect: 'follow'`.
+- Parts echo their request `url` (the client's cache identity), never the redirected final URL.
+- Part response headers ride minus wire-form/hop-by-hop/cookie-setting ones (`content-encoding`, `content-length`, `connection`, `keep-alive`, `transfer-encoding`, `upgrade`, `te`, `trailer`, `set-cookie`).
+- Part bodies: JSON content types ride inline (parsed); `text/*` as strings; anything else as base64 with `encoding: "base64"`; 204/304 parts carry no body. Binary (base64) parts sort last — stable sort — so text parts stay contiguous in one compression window.
+- Failures are per part, never per bundle: allow-list refusal → synthetic 403; unresolvable URL → synthetic 400; upstream throw → synthetic 502 (with the message); timeout → synthetic 504; upstream declared JSON but unparseable → synthetic 502.
+- The envelope: `Content-Type: application/vnd.double-meh.bundle+json`, `Cache-Control: no-store` (parts carry their own cache headers; the envelope must never be cached as a unit).
+
+### Constants
+
+- `REQUEST_MIME` = `application/vnd.double-meh.bundle-request+json`
+- `BUNDLE_MIME` = `application/vnd.double-meh.bundle+json`
+
+## Module: double-meh-bundler/node.js
+
+### toNodeHandler(handler, options?) → (req, res, next?) => Promise<void>
+
+Duck-typed `(IncomingMessage, ServerResponse, next?)` — covers bare `node:http` and Express (Express req/res are supersets; no framework import exists in the module). Options (`NodeHandlerOptions`):
+
+- `compress?: boolean` — gzip the envelope when the client's `Accept-Encoding` allows; default true (bare node has no compression middleware idiom, and compression is the bundle's payoff).
+
+Errors: forwarded to `next(error)` when a `next` function is supplied (Express style); otherwise a 500 `application/problem+json` is sent.
+
+```js
+import {createServer} from 'node:http';
+import {createBundler} from 'double-meh-bundler';
+import {toNodeHandler} from 'double-meh-bundler/node.js';
+
+const bundle = toNodeHandler(
+  createBundler({
+    isUrlAcceptable: url => url.startsWith('/api/'),
+    resolveUrl: url => new URL(url, 'http://api.internal:8080').href
+  })
+);
+createServer((req, res) => (req.url.startsWith('/bundle') ? bundle(req, res) : notFound(res))).listen(3000);
+```
+
+## Module: double-meh-bundler/koa.js
+
+### toKoaMiddleware(handler) → (ctx) => Promise<void>
+
+Duck-typed against a structural `KoaLikeContext` (deliberately not `@types/koa`): `req`, `href`, `method`, `status`, `body`, `set(field, value)` — the real Koa `Context` satisfies it. Terminal middleware — never calls `next`; mount it on the bundle route. Compression is middleware business: put `koa-compress` in front.
+
+Implementation note: Koa's body setter forces status 204 when assigned `null` — the adapter uses an empty string for bodyless responses so real statuses (e.g. the 405 method guard) survive.
+
+```js
+import Koa from 'koa';
+import route from 'koa-route';
+import {createBundler} from 'double-meh-bundler';
+import {toKoaMiddleware} from 'double-meh-bundler/koa.js';
+
+const app = new Koa();
+app.use(route.put('/bundle', toKoaMiddleware(createBundler({isUrlAcceptable}))));
+```
+
+## Wire format v1 (normative summary)
+
+Request (`application/vnd.double-meh.bundle-request+json`):
+
+```json
+{"v": 1, "parts": [{"id": "a", "url": "/api/users/42", "method": "GET", "headers": {"accept": "application/json", "if-none-match": "\"v7\""}}]}
+```
+
+Response (`application/vnd.double-meh.bundle+json`):
+
+```json
+{"v": 1, "parts": [
+  {"id": "a", "url": "/api/users/42", "status": 200, "headers": {"content-type": "application/json", "etag": "\"v8\"", "vary": "Accept"}, "body": {"name": "…"}},
+  {"id": "b", "url": "/api/roles", "status": 304, "headers": {"etag": "\"v3\""}},
+  {"id": "c", "url": "/api/broken", "status": 502, "synthetic": true, "headers": {"content-type": "text/plain"}, "body": "connection refused"}
+]}
+```
+
+Rules: correlation by client-assigned `id` (never order); parts always echo `url` (+ optional `accept`) so unclaimed parts can seed client caches; `synthetic: true` means the transport to the upstream never happened (client maps it to a transport error), while a genuine upstream non-2xx part keeps its status and body (client maps it to its normal HTTP-error path); base64 parts last; the envelope is `no-store`.
+
+## Errors
+
+- 405 + `Allow: PUT, POST` — wrong method on the bundler endpoint.
+- 400 `application/problem+json` — malformed body, unknown version, too many parts.
+- Per-part synthetic statuses: 400 (no/unresolvable url), 403 (allow-list), 405 (non-GET), 502 (upstream failure/bad JSON), 504 (timeout).
+
+## License
+
+BSD-3-Clause. Copyright (c) 2026 Eugene Lazutkin.
