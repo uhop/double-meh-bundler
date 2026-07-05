@@ -1,0 +1,60 @@
+{
+  "name": "double-meh-bundler",
+  "version": "1.0.0",
+  "description": "Server-side bundler for the double-meh bundle protocol: one fetch-handler core, framework adapters as thin subpaths.",
+  "homepage": "https://github.com/uhop/double-meh-bundler#readme",
+  "bugs": {
+    "url": "https://github.com/uhop/double-meh-bundler/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/uhop/double-meh-bundler.git"
+  },
+  "license": "BSD-3-Clause",
+  "author": "Eugene Lazutkin <eugene.lazutkin@gmail.com> (https://www.lazutkin.com/)",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "sideEffects": false,
+  "main": "./src/index.js",
+  "types": "./src/index.d.ts",
+  "exports": {
+    ".": "./src/index.js",
+    "./node": "./src/node.js",
+    "./*": "./src/*"
+  },
+  "scripts": {
+    "test": "tape6 --flags FO",
+    "test:bun": "tape6-bun --flags FO",
+    "test:deno": "tape6-deno --flags FO",
+    "ts-check": "tsc --noEmit",
+    "js-check": "tsc --project tsconfig.check.json",
+    "lint": "prettier --check .",
+    "lint:fix": "prettier --write ."
+  },
+  "keywords": [
+    "http",
+    "bundler",
+    "batching",
+    "double-meh",
+    "zero-dependency"
+  ],
+  "funding": "https://github.com/sponsors/uhop",
+  "files": [
+    "src",
+    "LICENSE",
+    "README.md"
+  ],
+  "tape6": {
+    "tests": [
+      "/tests/test-*.*js"
+    ]
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "prettier": "^3.9.4",
+    "tape-six": "^1.13.0",
+    "typescript": "^6.0.3"
+  }
+}
