@@ -54,11 +54,11 @@
     ]
   },
   "devDependencies": {
-    "@types/node": "^26.1.0",
+    "@types/node": "^26.1.2",
     "koa": "^3.2.1",
-    "prettier": "^3.9.4",
-    "tape-six": "^1.13.0",
-    "typescript": "^6.0.3",
+    "prettier": "^3.9.6",
+    "tape-six": "^1.16.2",
+    "typescript": "^7.0.2",
     "wiki-search-index": "^0.2.0"
   }
 }

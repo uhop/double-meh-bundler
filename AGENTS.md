@@ -46,7 +46,7 @@ The full gate before shipping: `lint` + `ts-check` + `js-check` + tests on Node,
 
 ## Testing
 
-- `tape-six`; tests in `tests/test-*.mjs`, runnable on Node/Bun/Deno.
+- `tape-six`; tests in `tests/test-*.js`, runnable on Node/Bun/Deno.
 - The core is tested with an **injected upstream `fetch`** — no server needed; the node adapter
   is tested over a real `node:http` server.
 - Keep the error-path coverage: synthetic parts (allow-list refusal, upstream failure, timeout,

@@ -12,9 +12,9 @@ double-meh-bundler
 │   ├── node.js           # toNodeHandler(handler) — duck-typed (req, res, next?): node:http + Express
 │   └── koa.js            # toKoaMiddleware(handler) — duck-typed ctx; terminal, route-mounted
 ├── tests/
-│   ├── test-bundler.mjs  # Core over an injected upstream fetch (no server)
-│   ├── test-node.mjs     # Adapter over a real node:http server (incl. gzip)
-│   └── test-koa.mjs      # Adapter over a real koa app (koa is a devDep for this test only)
+│   ├── test-bundler.js   # Core over an injected upstream fetch (no server)
+│   ├── test-node.js      # Adapter over a real node:http server (incl. gzip)
+│   └── test-koa.js       # Adapter over a real koa app (koa is a devDep for this test only)
 └── examples/
     └── basic/            # Minimal node:http server wiring the bundler
 ```
