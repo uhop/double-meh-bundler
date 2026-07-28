@@ -22,7 +22,7 @@ double-meh-bundler
 ## Core concepts
 
 - **Fetch handler as the product**: `(Request) => Promise<Response>` runs on `Bun.serve`,
-  `Deno.serve`, service workers, web-handler frameworks, and — via the `./node` subpath — bare
+  `Deno.serve`, service workers, web-handler frameworks, and — via the `./node.js` subpath — bare
   `node:http` and Express. Adapters convert shapes; they never import frameworks.
 - **Security**: `isUrlAcceptable` (required allow-list) + `resolveUrl` (public → internal mapping);
   auth/cookie propagate from the outer request only; `maxRequests` caps the fan-out;
