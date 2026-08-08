@@ -54,8 +54,8 @@
     ]
   },
   "devDependencies": {
-    "@types/node": "^26.1.2",
-    "double-meh": "^1.1.0",
+    "@types/node": "^26.2.0",
+    "double-meh": "^1.1.1",
     "koa": "^3.2.1",
     "prettier": "^3.9.6",
     "tape-six": "^1.16.2",

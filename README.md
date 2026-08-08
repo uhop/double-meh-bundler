@@ -62,8 +62,13 @@ The client side is [double-meh](https://github.com/uhop/double-meh)'s `io.bundle
 
 Zero runtime dependencies. ESM. Node ≥ 18 (the code floor: web-standard `fetch`/`Request`/`Response` globals), Bun, Deno; the core also runs wherever a fetch handler does.
 
-## Release notes
+## Release history
 
-- 1.0.0 — _(unreleased)_ The initial release: the fetch-handler core, the `node:http`/Express adapter (gzip built in), the Koa adapter, the instrumentation/transform hooks, and the streamed `…bundle+jsonl` framing. Details in the [wiki release notes](https://github.com/uhop/double-meh-bundler/wiki/Release-notes).
+- 1.0.0 _The initial release: a fetch-handler core with `node:http`/Express and Koa adapters, instrumentation and transform hooks, and streamed `…bundle+jsonl` bundles._
 
-License: BSD-3-Clause.
+See the [release notes](https://github.com/uhop/double-meh-bundler/wiki/Release-notes) for the
+long-form history.
+
+## License
+
+BSD-3-Clause © [Eugene Lazutkin](https://www.lazutkin.com/)
