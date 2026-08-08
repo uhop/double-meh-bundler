@@ -1,4 +1,4 @@
-# double-meh-bundler [![NPM version][npm-img]][npm-url]
+# double-meh-bundler :// [![NPM version][npm-img]][npm-url]
 
 [npm-img]: https://img.shields.io/npm/v/double-meh-bundler.svg
 [npm-url]: https://npmjs.org/package/double-meh-bundler
