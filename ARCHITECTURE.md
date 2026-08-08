@@ -14,7 +14,8 @@ double-meh-bundler
 ├── tests/
 │   ├── test-bundler.js   # Core over an injected upstream fetch (no server)
 │   ├── test-node.js      # Adapter over a real node:http server (incl. gzip)
-│   └── test-koa.js       # Adapter over a real koa app (koa is a devDep for this test only)
+│   ├── test-koa.js       # Adapter over a real koa app (koa is a devDep for this test only)
+│   └── test-conformance.js # The published double-meh client against this bundler, over real HTTP
 └── examples/
     └── basic/            # Minimal node:http server wiring the bundler
 ```

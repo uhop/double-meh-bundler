@@ -36,7 +36,7 @@ The full gate before shipping: `lint` + `ts-check` + `js-check` + tests on Node,
   (`src/node.js`).
 - **Adapters are duck-typed shape converters** — never import a framework at runtime; framework
   types may appear in `.d.ts` sidecars only. Frameworks appear as devDependencies solely for
-  conformance tests.
+  conformance tests — as does `double-meh` itself, the reference client (see Testing).
 - **The allow-list (`isUrlAcceptable`) is the security boundary** — required, no default,
   never weaken it.
 - **Observer hooks never change behavior** — `onBundleStart`/`onItemFinish`/`onBundleFinish` stay
@@ -55,5 +55,11 @@ The full gate before shipping: `lint` + `ts-check` + `js-check` + tests on Node,
 - `tape-six`; tests in `tests/test-*.js`, runnable on Node/Bun/Deno.
 - The core is tested with an **injected upstream `fetch`** — no server needed; the node adapter
   is tested over a real `node:http` server.
+- **`tests/test-conformance.js` drives the real `double-meh` client against this bundler over real
+  HTTP** — the devDependency is the **published** client, deliberately: conformance means agreeing
+  with what consumers actually install, not with a sibling working tree. The consequence is a
+  release ordering — a wire-format change ships in the client first, and the conformance test
+  catches up on the next `double-meh` release. For unreleased cross-repo work, drive the two
+  packages from a throwaway script instead of relaxing this to a path dependency.
 - Keep the error-path coverage: synthetic parts (allow-list refusal, upstream failure, timeout,
   non-GET), protocol guards (method/body/version/size), header stripping, base64 sort order.
