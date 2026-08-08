@@ -37,6 +37,15 @@ const synthetic = (part, url, status, message) => ({
   body: message
 });
 
+// instrumentation must never change behavior: an observer's throw or rejection is swallowed
+const notify = (hook, ...args) => {
+  if (!hook) return;
+  try {
+    const result = hook(...args);
+    if (result && typeof result.then === 'function') result.then(undefined, () => {});
+  } catch {}
+};
+
 const toBase64 = buffer => {
   const bytes = new Uint8Array(buffer);
   let binary = '';
@@ -52,12 +61,24 @@ export const createBundler = (options = {}) => {
     resolveUrl = url => url,
     fetch: upstream = globalThis.fetch,
     maxRequests = 20,
-    partTimeout = 10000
+    partTimeout = 10000,
+    onBundleStart,
+    onBundleFinish,
+    onItemFinish,
+    processResult,
+    processBundle
   } = options;
   if (typeof isUrlAcceptable !== 'function') {
     throw new TypeError(
       'double-meh-bundler: isUrlAcceptable is required — the allow-list is the security boundary'
     );
+  }
+  // a mistyped hook name is silently inert otherwise
+  const hooks = {onBundleStart, onBundleFinish, onItemFinish, processResult, processBundle};
+  for (const [name, hook] of Object.entries(hooks)) {
+    if (hook != null && typeof hook !== 'function') {
+      throw new TypeError('double-meh-bundler: ' + name + ' must be a function');
+    }
   }
 
   const runPart = async (part, request) => {
@@ -140,6 +161,28 @@ export const createBundler = (options = {}) => {
     };
   };
 
+  const finishPart = async (requestPart, request) => {
+    const started = performance.now();
+    let part = await runPart(requestPart, request);
+    const durationMs = performance.now() - started;
+    if (processResult) {
+      try {
+        const transformed = await processResult(part, {request, requestPart, durationMs});
+        // nullish keeps the original: a dropped part leaves the client's waiter unresolved
+        if (transformed != null) part = transformed;
+      } catch (error) {
+        part = synthetic(
+          requestPart,
+          String(requestPart.url || ''),
+          500,
+          'processResult failed: ' + String((error && error.message) || error)
+        );
+      }
+    }
+    notify(onItemFinish, part, {request, requestPart, durationMs});
+    return part;
+  };
+
   return async request => {
     if (request.method !== 'PUT' && request.method !== 'POST') {
       return new Response(null, {
@@ -159,11 +202,26 @@ export const createBundler = (options = {}) => {
     if (doc.parts.length > maxRequests) {
       return problem(400, 'too many parts (max ' + maxRequests + ')');
     }
-    const parts = await Promise.all(doc.parts.map(part => runPart(part, request)));
-    // binary parts sort last (stable): text parts stay contiguous in one compression window
+    const started = performance.now();
+    notify(onBundleStart, {request, parts: doc.parts});
+    const parts = await Promise.all(doc.parts.map(part => finishPart(part, request)));
+    // binary parts sort last (stable): text parts stay contiguous in one compression window.
+    // After processResult, so a transform that turns a part base64 still sorts where it belongs
     parts.sort((a, b) => (a.encoding === 'base64' ? 1 : 0) - (b.encoding === 'base64' ? 1 : 0));
+    let envelope = {v: 1, parts};
+    if (processBundle) {
+      try {
+        const transformed = await processBundle(envelope, {request});
+        if (transformed != null) envelope = transformed;
+      } catch {
+        // no per-part isolation left to fall back on; the message stays server-side.
+        // no onBundleFinish either: nothing finished, and the unmatched start is the signal
+        return problem(500, 'processBundle failed');
+      }
+    }
+    notify(onBundleFinish, envelope, {request, durationMs: performance.now() - started});
     // no-store: the envelope must never be cached or revalidated as a unit — parts carry their own
-    return new Response(JSON.stringify({v: 1, parts}), {
+    return new Response(JSON.stringify(envelope), {
       headers: {'content-type': BUNDLE_MIME, 'cache-control': 'no-store'}
     });
   };

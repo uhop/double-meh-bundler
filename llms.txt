@@ -28,6 +28,8 @@ Bun.serve({fetch: bundler}); // or Deno.serve(bundler), or any Request → Respo
 - `fetch(request)` — injectable upstream fetch; default `globalThis.fetch`.
 - `maxRequests` — parts cap per bundle (400 above it); default 20.
 - `partTimeout` — per-part upstream timeout in ms; a hung upstream becomes a synthetic 504 part; default 10000.
+- `onBundleStart(context)`, `onItemFinish(part, context)`, `onBundleFinish(bundle, context)` — observers for metrics/logging. Not awaited; a throw or rejection is swallowed — instrumentation never changes behavior. `onBundleFinish` carries the whole-bundle `durationMs` and does not fire when `processBundle` throws.
+- `processResult(part, context)`, `processBundle(bundle, context)` — transforms, awaited. A nullish return keeps the original; a throwing `processResult` turns that part into a synthetic 500, a throwing `processBundle` fails the bundle with a 500. `processResult` runs before the base64 sort.
 
 ## Node/Express adapter (`double-meh-bundler/node.js`)
 

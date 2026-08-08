@@ -42,12 +42,26 @@ createServer(toNodeHandler(createBundler({isUrlAcceptable}))).listen(3000);
 //          app.use(route.put('/bundle', toKoaMiddleware(createBundler({isUrlAcceptable}))));
 ```
 
+Observability and per-part transforms are opt-in hooks:
+
+```js
+createBundler({
+  isUrlAcceptable,
+  onBundleStart: ({parts}) => metrics.count('bundle', parts.length),
+  onItemFinish: (part, {durationMs}) => metrics.timing(part.url, durationMs),
+  onBundleFinish: (bundle, {durationMs}) => metrics.timing('bundle', durationMs),
+  processResult: part => redact(part) // and processBundle for the whole envelope
+});
+```
+
+Observers are never awaited and their failures are swallowed — instrumentation cannot fail a bundle. Transforms are awaited; a nullish return keeps the original.
+
 The client side is [double-meh](https://github.com/uhop/double-meh)'s `io.bundle` — transparent batching with per-URL caching, ETag/304 revalidation, and error granularity intact. The wire format (v1) is deliberately library-independent: `application/vnd.double-meh.bundle{-request}+json` envelopes, id-correlated parts echoing their URLs, per-part conditional headers, outer-request auth/cookie propagation, synthetic parts for bundler-side failures, and binary parts riding base64 sorted last to preserve compression locality.
 
 Zero runtime dependencies. ESM. Node ≥ 18 (the code floor: web-standard `fetch`/`Request`/`Response` globals), Bun, Deno; the core also runs wherever a fetch handler does.
 
 ## Release notes
 
-- 1.0.0 — _(unreleased)_ The initial release: the fetch-handler core, the `node:http`/Express adapter (gzip built in), the Koa adapter. Details in the [wiki release notes](https://github.com/uhop/double-meh-bundler/wiki/Release-notes).
+- 1.0.0 — _(unreleased)_ The initial release: the fetch-handler core, the `node:http`/Express adapter (gzip built in), the Koa adapter, and the instrumentation/transform hooks. Details in the [wiki release notes](https://github.com/uhop/double-meh-bundler/wiki/Release-notes).
 
 License: BSD-3-Clause.

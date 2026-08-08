@@ -232,3 +232,200 @@ test('bundler: isUrlAcceptable is mandatory', async t => {
     t.ok(/isUrlAcceptable/.test(error.message), 'naming the option');
   }
 });
+
+test('hooks: observers see the bundle and every finished part', async t => {
+  const started = [];
+  const finished = [];
+  const done = [];
+  const order = [];
+  const bundler = createBundler({
+    isUrlAcceptable: accept,
+    fetch: upstreamOf({'/a': () => json({name: 'a'}), '/b': () => json({name: 'b'})}),
+    onBundleStart: context => (started.push(context), order.push('start')),
+    onItemFinish: (part, context) => (finished.push([part, context]), order.push('item')),
+    onBundleFinish: (bundle, context) => (done.push([bundle, context]), order.push('finish'))
+  });
+  await bundler(
+    bundleRequest([
+      {id: 'x', url: ORIGIN + '/a'},
+      {id: 'y', url: ORIGIN + '/b'}
+    ])
+  );
+  t.equal(started.length, 1, 'onBundleStart fired once');
+  t.equal(started[0].parts.length, 2, 'with the requested parts');
+  t.equal(started[0].request.method, 'PUT', 'and the outer request');
+  t.equal(finished.length, 2, 'onItemFinish fired per part');
+  t.deepEqual(finished.map(([part]) => part.id).sort(), ['x', 'y'], 'once for each');
+  const [part, context] = finished[0];
+  t.equal(part.status, 200, 'the shipped part');
+  t.equal(context.requestPart.url, part.url, 'the request-side part rides the context');
+  t.ok(typeof context.durationMs === 'number' && context.durationMs >= 0, 'with a duration');
+  t.equal(done.length, 1, 'onBundleFinish fired once');
+  t.equal(done[0][0].parts.length, 2, 'with the shipped envelope');
+  t.equal(done[0][1].request.method, 'PUT', 'and the outer request');
+  t.ok(done[0][1].durationMs >= context.durationMs, 'its duration spans the whole bundle');
+  t.deepEqual(order, ['start', 'item', 'item', 'finish'], 'start, then every item, then finish');
+});
+
+test('hooks: onBundleFinish sees the envelope processBundle produced', async t => {
+  let seen;
+  const bundler = createBundler({
+    isUrlAcceptable: accept,
+    fetch: upstreamOf({'/a': () => json({name: 'a'})}),
+    processBundle: bundle => ({...bundle, servedBy: 'edge-1'}),
+    onBundleFinish: bundle => (seen = bundle)
+  });
+  await bundler(bundleRequest([{id: 'x', url: ORIGIN + '/a'}]));
+  t.equal(seen.servedBy, 'edge-1', 'the transformed envelope, not the pre-transform one');
+});
+
+test('hooks: onBundleFinish stays silent when processBundle throws', async t => {
+  let fired = 0;
+  const bundler = createBundler({
+    isUrlAcceptable: accept,
+    fetch: upstreamOf({'/a': () => json({name: 'a'})}),
+    processBundle: () => {
+      throw new Error('envelope transform blew up');
+    },
+    onBundleFinish: () => ++fired
+  });
+  const response = await bundler(bundleRequest([{id: 'x', url: ORIGIN + '/a'}]));
+  t.equal(response.status, 500, 'the bundle failed');
+  t.equal(fired, 0, 'no finish fired — the unmatched start is the failure signal');
+});
+
+test('hooks: a throwing observer never touches the bundle', async t => {
+  const bundler = createBundler({
+    isUrlAcceptable: accept,
+    fetch: upstreamOf({'/a': () => json({name: 'a'})}),
+    onBundleStart: () => {
+      throw new Error('metrics exploded');
+    },
+    onItemFinish: () => Promise.reject(new Error('async metrics exploded')),
+    onBundleFinish: () => {
+      throw new Error('metrics exploded at the end');
+    }
+  });
+  const response = await bundler(bundleRequest([{id: 'x', url: ORIGIN + '/a'}]));
+  t.equal(response.status, 200, 'the bundle still ships');
+  const doc = await response.json();
+  t.deepEqual(doc.parts[0].body, {name: 'a'}, 'with the part intact');
+});
+
+test('hooks: processResult rewrites a part, nullish keeps it', async t => {
+  const bundler = createBundler({
+    isUrlAcceptable: accept,
+    fetch: upstreamOf({'/a': () => json({secret: 1, keep: 2}), '/b': () => json({name: 'b'})}),
+    processResult: part => (part.id === 'x' ? {...part, body: {keep: part.body.keep}} : undefined)
+  });
+  const doc = await (
+    await bundler(
+      bundleRequest([
+        {id: 'x', url: ORIGIN + '/a'},
+        {id: 'y', url: ORIGIN + '/b'}
+      ])
+    )
+  ).json();
+  t.deepEqual(doc.parts[0].body, {keep: 2}, 'the transformed part shipped rewritten');
+  t.deepEqual(doc.parts[1].body, {name: 'b'}, 'a nullish return kept the original');
+});
+
+test('hooks: a throwing processResult becomes a synthetic 500, siblings unaffected', async t => {
+  const bundler = createBundler({
+    isUrlAcceptable: accept,
+    fetch: upstreamOf({'/a': () => json({name: 'a'}), '/b': () => json({name: 'b'})}),
+    processResult: part => {
+      if (part.id === 'x') throw new Error('transform blew up');
+      return part;
+    }
+  });
+  const doc = await (
+    await bundler(
+      bundleRequest([
+        {id: 'x', url: ORIGIN + '/a'},
+        {id: 'y', url: ORIGIN + '/b'}
+      ])
+    )
+  ).json();
+  t.equal(doc.parts[0].status, 500, 'the failed transform synthesized a 500');
+  t.ok(doc.parts[0].synthetic, 'synthetically');
+  t.ok(/transform blew up/.test(doc.parts[0].body), 'with the message');
+  t.equal(doc.parts[0].id, 'x', 'keeping the id so the waiter resolves');
+  t.deepEqual(doc.parts[1].body, {name: 'b'}, 'the sibling shipped');
+});
+
+test('hooks: processResult runs before the base64 sort', async t => {
+  const bytes = Uint8Array.from({length: 8}, (_, i) => i);
+  const bundler = createBundler({
+    isUrlAcceptable: accept,
+    fetch: upstreamOf({'/a': () => json({name: 'a'}), '/b': () => json({name: 'b'})}),
+    // a transform that turns a JSON part binary must still sort last
+    processResult: part =>
+      part.id === 'x'
+        ? {...part, body: btoa(String.fromCharCode(...bytes)), encoding: 'base64'}
+        : part
+  });
+  const doc = await (
+    await bundler(
+      bundleRequest([
+        {id: 'x', url: ORIGIN + '/a'},
+        {id: 'y', url: ORIGIN + '/b'}
+      ])
+    )
+  ).json();
+  t.deepEqual(
+    doc.parts.map(part => part.id),
+    ['y', 'x'],
+    'the transformed binary part sorted last'
+  );
+});
+
+test('hooks: processBundle rewrites the envelope', async t => {
+  let seen;
+  const bundler = createBundler({
+    isUrlAcceptable: accept,
+    fetch: upstreamOf({'/a': () => json({name: 'a'})}),
+    processBundle: (bundle, context) => {
+      seen = context;
+      return {...bundle, meta: {served: 'edge-1'}};
+    }
+  });
+  const doc = await (await bundler(bundleRequest([{id: 'x', url: ORIGIN + '/a'}]))).json();
+  t.deepEqual(doc.meta, {served: 'edge-1'}, 'the envelope shipped extended');
+  t.equal(doc.parts.length, 1, 'parts intact');
+  t.equal(seen.request.method, 'PUT', 'the outer request rides the context');
+});
+
+test('hooks: a throwing processBundle fails the bundle as a 500', async t => {
+  const bundler = createBundler({
+    isUrlAcceptable: accept,
+    fetch: upstreamOf({'/a': () => json({name: 'a'})}),
+    processBundle: () => {
+      throw new Error('envelope transform blew up');
+    }
+  });
+  const response = await bundler(bundleRequest([{id: 'x', url: ORIGIN + '/a'}]));
+  t.equal(response.status, 500, '500');
+  t.equal(response.headers.get('content-type'), 'application/problem+json', 'as problem+json');
+  const doc = await response.json();
+  t.ok(!/blew up/.test(JSON.stringify(doc)), 'the consumer message stays server-side');
+});
+
+test('hooks: a non-function hook is refused at construction', async t => {
+  const names = [
+    'onBundleStart',
+    'onBundleFinish',
+    'onItemFinish',
+    'processResult',
+    'processBundle'
+  ];
+  for (const name of names) {
+    try {
+      createBundler({isUrlAcceptable: accept, [name]: 'nope'});
+      t.fail('must throw for ' + name);
+    } catch (error) {
+      t.ok(error instanceof TypeError, name + ': TypeError');
+      t.ok(error.message.includes(name), name + ': naming the option');
+    }
+  }
+});

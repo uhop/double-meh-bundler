@@ -39,6 +39,9 @@ The full gate before shipping: `lint` + `ts-check` + `js-check` + tests on Node,
   conformance tests.
 - **The allow-list (`isUrlAcceptable`) is the security boundary** — required, no default,
   never weaken it.
+- **Observer hooks never change behavior** — `onBundleStart`/`onItemFinish`/`onBundleFinish` stay
+  unawaited with their failures swallowed; anything that may alter the response is a transform
+  (`processResult`/`processBundle`) and says so. Never await an observer to "make it reliable".
 - **Wire format fidelity**: any change to part shapes must stay in lockstep with double-meh's
   client (`src/services/bundle.js` there) and the design record; the format is versioned (`v`).
 - Zero runtime dependencies; `engines.node >= 18` is the code floor (web-standard

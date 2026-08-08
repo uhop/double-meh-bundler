@@ -23,6 +23,20 @@ Options (`BundlerOptions`):
 - `fetch?: (request: Request) => Response | Promise<Response>` — the upstream fetch. Default `globalThis.fetch`. Inject for tests, mocks, or in-process serving.
 - `maxRequests?: number` — hard cap on parts per bundle; above it the whole request is refused with 400 problem+json. Default 20.
 - `partTimeout?: number` — per-part upstream timeout (ms). Implemented as an explicit race (works even when the injected upstream ignores AbortSignals); a timed-out part becomes a synthetic 504 part. Default 10000.
+- `onBundleStart?: (context: {request, parts}) => unknown` — observer, fired once after the protocol guards pass and before the fan-out; `parts` are the request-side descriptors.
+- `onItemFinish?: (part, context) => unknown` — observer, fired per part once it reaches its final shape (after `processResult`). Context: `{request, requestPart, durationMs}` where `durationMs` is upstream fetch time excluding the transform.
+- `onBundleFinish?: (bundle, context) => unknown` — observer, fired once when the envelope reaches its final shape (after `processBundle`), before serialization. Context: `{request, durationMs}` where `durationMs` is the whole bundle, from the guards passing to the finished envelope.
+- `processResult?: (part, context) => part | null | undefined | Promise<…>` — transform one finished part; awaited. Same context as `onItemFinish`.
+- `processBundle?: (bundle, context: {request}) => bundle | null | undefined | Promise<…>` — transform the whole `{v: 1, parts}` envelope after the sort and before serialization; awaited.
+
+Hook contract:
+
+- Observers (`onBundleStart`, `onItemFinish`, `onBundleFinish`) are **not awaited** and their throws/rejections are swallowed: instrumentation never changes behavior, so a broken metrics counter cannot fail a bundle. A slow observer never delays the response.
+- Observer order per bundle: `onBundleStart`, then one `onItemFinish` per part (fan-out order, not request order), then `onBundleFinish`. `onBundleStart` fires only after the protocol guards pass, and `onBundleFinish` only when an envelope was actually produced — a start with no matching finish means `processBundle` threw.
+- Transforms (`processResult`, `processBundle`) are awaited. A **nullish return keeps the original** value — a dropped part would leave the client's waiter unresolved, so the forgiving contract is deliberate.
+- A throwing `processResult` makes that part a synthetic 500 (id preserved, so the client's waiter still resolves) while siblings ship normally; a throwing `processBundle` has no per-part isolation left and fails the bundle with a 500 problem+json whose title carries no consumer message.
+- `processResult` runs **before** the base64 sort, so a transform that turns a part binary still sorts last and keeps the compression-window locality; `processBundle` runs after it and owns whatever ordering it produces.
+- Every hook is validated at construction: a supplied non-function throws a TypeError naming the option (a mistyped hook name would otherwise be silently inert).
 
 Handler behavior:
 

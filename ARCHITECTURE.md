@@ -32,6 +32,11 @@ double-meh-bundler
   text as strings, binary as base64 **sorted last** (compression-window locality); per-part
   failures become `synthetic: true` parts — one bad upstream never fails the bundle.
 - **Injectable upstream `fetch`** — tests, mocks, and in-process serving need no network.
+- **Hooks split by whether they may change the answer**: observers (`onBundleStart`,
+  `onItemFinish`, `onBundleFinish`) are unawaited and their failures are swallowed —
+  instrumentation can never fail a bundle;
+  transforms (`processResult`, `processBundle`) are awaited, keep the original on a nullish return,
+  and degrade to a synthetic 500 part / a 500 envelope when they throw.
 
 ## Module dependency graph
 
