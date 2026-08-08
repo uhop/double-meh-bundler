@@ -32,6 +32,10 @@ double-meh-bundler
   text as strings, binary as base64 **sorted last** (compression-window locality); per-part
   failures become `synthetic: true` parts — one bad upstream never fails the bundle.
 - **Injectable upstream `fetch`** — tests, mocks, and in-process serving need no network.
+- **Two framings, one part shape**: a client asking for `…bundle+jsonl` gets a `{"v":1}` header line
+  plus one part per line, flushed as upstreams complete. `v` stays 1 — the framing changed, not the
+  parts — so the content type is the discriminator. Base64 parts still ship last; compression pays
+  for the early flush (measured +25%/+57% bytes at 10/50 parts).
 - **Hooks split by whether they may change the answer**: observers (`onBundleStart`,
   `onItemFinish`, `onBundleFinish`) are unawaited and their failures are swallowed —
   instrumentation can never fail a bundle;

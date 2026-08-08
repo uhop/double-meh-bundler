@@ -1,5 +1,6 @@
 export declare const REQUEST_MIME: string;
 export declare const BUNDLE_MIME: string;
+export declare const BUNDLE_JSONL_MIME: string;
 
 export type FetchHandler = (request: Request) => Promise<Response>;
 
@@ -47,6 +48,13 @@ export interface BundlerOptions {
   maxRequests?: number;
   /** Per-part upstream timeout, ms — a timed-out part becomes a synthetic 504. Default: 10000. */
   partTimeout?: number;
+  /**
+   * Serve `application/vnd.double-meh.bundle+jsonl` when the request's `Accept` names it —
+   * a `{"v":1}` header line followed by one part per line, flushed as upstreams complete.
+   * Never applies when `processBundle` is configured (that transform needs the whole envelope).
+   * Default: true.
+   */
+  streaming?: boolean;
 
   /**
    * Observer: the bundle passed its protocol guards and is about to fan out.

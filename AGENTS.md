@@ -44,6 +44,9 @@ The full gate before shipping: `lint` + `ts-check` + `js-check` + tests on Node,
   (`processResult`/`processBundle`) and says so. Never await an observer to "make it reliable".
 - **Wire format fidelity**: any change to part shapes must stay in lockstep with double-meh's
   client (`src/services/bundle.js` there) and the design record; the format is versioned (`v`).
+- **Match bundle content types by essence, never `startsWith`** — `…bundle+json` is a string prefix
+  of `…bundle+jsonl`, so a prefix test accepts a streamed body as a buffered one. Both repos carry
+  a regression test for this.
 - Zero runtime dependencies; `engines.node >= 18` is the code floor (web-standard
   `fetch`/`Request`/`Response` globals), not a support promise.
 

@@ -1,6 +1,6 @@
 import test from 'tape-six';
 import {createServer} from 'node:http';
-import {gunzipSync} from 'node:zlib';
+import {createGunzip, gunzipSync} from 'node:zlib';
 
 import {createBundler} from '../src/index.js';
 import {toNodeHandler} from '../src/node.js';
@@ -67,6 +67,85 @@ test('node adapter: the response is gzipped for accepting clients', async t => {
     t.equal(raw.res.headers['content-encoding'], 'gzip', 'gzip on the wire');
     const doc = JSON.parse(gunzipSync(raw.body).toString());
     t.equal(doc.v, 1, 'the gzipped envelope decodes');
+  });
+});
+
+const waitUntil = async predicate => {
+  for (let i = 0; i < 200; ++i) {
+    if (predicate()) return;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  throw new Error('condition not met within 2s');
+};
+
+test('node adapter: a streamed bundle flushes parts through gzip', async t => {
+  let release;
+  const gate = new Promise(resolve => (release = resolve));
+  const handler = toNodeHandler(
+    createBundler({
+      isUrlAcceptable: () => true,
+      fetch: request =>
+        request.url.endsWith('/slow')
+          ? gate.then(() => json({which: 'slow'}))
+          : json({which: 'fast'})
+    })
+  );
+  await withServer(handler, async base => {
+    const {request: httpRequest} = await import('node:http');
+    const gunzip = createGunzip();
+    const records = [];
+    let buffer = '';
+    gunzip.on('data', chunk => {
+      buffer += chunk.toString();
+      let index;
+      while ((index = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, index).trim();
+        buffer = buffer.slice(index + 1);
+        if (line) records.push(JSON.parse(line));
+      }
+    });
+    const finished = new Promise((resolve, reject) => {
+      const req = httpRequest(
+        base + '/bundle',
+        {
+          method: 'PUT',
+          headers: {
+            'accept-encoding': 'gzip',
+            accept: 'application/vnd.double-meh.bundle+jsonl',
+            'content-type': 'application/json'
+          }
+        },
+        res => {
+          t.equal(res.headers['content-encoding'], 'gzip', 'gzip on the wire');
+          t.equal(
+            res.headers['content-type'],
+            'application/vnd.double-meh.bundle+jsonl',
+            'jsonl MIME crossed the wire'
+          );
+          gunzip.on('end', resolve);
+          res.on('error', reject);
+          res.pipe(gunzip);
+        }
+      );
+      req.on('error', reject);
+      req.end(
+        JSON.stringify({
+          v: 1,
+          parts: [
+            {id: 'slow', url: 'https://api.internal/slow'},
+            {id: 'fast', url: 'https://api.internal/fast'}
+          ]
+        })
+      );
+    });
+    // without the per-part Z_SYNC_FLUSH gzip holds everything back and this never arrives
+    await waitUntil(() => records.length >= 2);
+    t.deepEqual(records[0], {v: 1}, 'the header line arrived first');
+    t.equal(records[1].id, 'fast', 'the fast part crossed the wire while the slow one was pending');
+    release();
+    await finished;
+    t.equal(records.length, 3, 'the slow part followed');
+    t.equal(records[2].id, 'slow', 'in completion order');
   });
 });
 

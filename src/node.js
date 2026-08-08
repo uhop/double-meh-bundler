@@ -1,9 +1,10 @@
 // @ts-self-types="./node.d.ts"
 // node:http adapter — duck-typed (req, res, next?): covers bare node:http and Express alike.
 import {Readable} from 'node:stream';
-import {createGzip} from 'node:zlib';
+import {constants, createGzip} from 'node:zlib';
 
 const gzipRe = /(^|[,\s])gzip($|[;,\s])/;
+const jsonlRe = /\+jsonl\b/;
 
 export const toNodeHandler = (handler, options = {}) => {
   const {compress = true} = options;
@@ -32,7 +33,10 @@ export const toNodeHandler = (handler, options = {}) => {
         delete outHeaders['content-length'];
         outHeaders['content-encoding'] = 'gzip';
         res.writeHead(response.status, outHeaders);
-        source.pipe(createGzip()).pipe(res);
+        // a streamed bundle needs the per-part flush to reach the client early — without it gzip
+        // re-buffers the whole stream. Measured cost: +25% bytes at 10 parts, +57% at 50
+        const streamed = jsonlRe.test(outHeaders['content-type'] || '');
+        source.pipe(createGzip(streamed ? {flush: constants.Z_SYNC_FLUSH} : {})).pipe(res);
       } else {
         res.writeHead(response.status, outHeaders);
         if (source) source.pipe(res);

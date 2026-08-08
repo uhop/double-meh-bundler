@@ -56,12 +56,14 @@ createBundler({
 
 Observers are never awaited and their failures are swallowed — instrumentation cannot fail a bundle. Transforms are awaited; a nullish return keeps the original.
 
+A client that asks for `application/vnd.double-meh.bundle+jsonl` gets the same parts streamed as their upstreams complete — a `{"v":1}` header line, then one part per line — so a slow upstream stops holding up the fast ones. It costs compression (per-part gzip flushing runs +25% bytes at 10 parts, +57% at 50), so it is client-negotiated rather than automatic: see the [wire format](https://github.com/uhop/double-meh-bundler/wiki/Wire-format#streamed-framing).
+
 The client side is [double-meh](https://github.com/uhop/double-meh)'s `io.bundle` — transparent batching with per-URL caching, ETag/304 revalidation, and error granularity intact. The wire format (v1) is deliberately library-independent: `application/vnd.double-meh.bundle{-request}+json` envelopes, id-correlated parts echoing their URLs, per-part conditional headers, outer-request auth/cookie propagation, synthetic parts for bundler-side failures, and binary parts riding base64 sorted last to preserve compression locality.
 
 Zero runtime dependencies. ESM. Node ≥ 18 (the code floor: web-standard `fetch`/`Request`/`Response` globals), Bun, Deno; the core also runs wherever a fetch handler does.
 
 ## Release notes
 
-- 1.0.0 — _(unreleased)_ The initial release: the fetch-handler core, the `node:http`/Express adapter (gzip built in), the Koa adapter, and the instrumentation/transform hooks. Details in the [wiki release notes](https://github.com/uhop/double-meh-bundler/wiki/Release-notes).
+- 1.0.0 — _(unreleased)_ The initial release: the fetch-handler core, the `node:http`/Express adapter (gzip built in), the Koa adapter, the instrumentation/transform hooks, and the streamed `…bundle+jsonl` framing. Details in the [wiki release notes](https://github.com/uhop/double-meh-bundler/wiki/Release-notes).
 
 License: BSD-3-Clause.

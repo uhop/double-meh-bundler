@@ -23,6 +23,7 @@ Options (`BundlerOptions`):
 - `fetch?: (request: Request) => Response | Promise<Response>` — the upstream fetch. Default `globalThis.fetch`. Inject for tests, mocks, or in-process serving.
 - `maxRequests?: number` — hard cap on parts per bundle; above it the whole request is refused with 400 problem+json. Default 20.
 - `partTimeout?: number` — per-part upstream timeout (ms). Implemented as an explicit race (works even when the injected upstream ignores AbortSignals); a timed-out part becomes a synthetic 504 part. Default 10000.
+- `streaming?: boolean` — serve `application/vnd.double-meh.bundle+jsonl` when the request's `Accept` names it exactly. Default true, but entirely client-driven: a client that never asks never gets it. Forced off whenever `processBundle` is configured.
 - `onBundleStart?: (context: {request, parts}) => unknown` — observer, fired once after the protocol guards pass and before the fan-out; `parts` are the request-side descriptors.
 - `onItemFinish?: (part, context) => unknown` — observer, fired per part once it reaches its final shape (after `processResult`). Context: `{request, requestPart, durationMs}` where `durationMs` is upstream fetch time excluding the transform.
 - `onBundleFinish?: (bundle, context) => unknown` — observer, fired once when the envelope reaches its final shape (after `processBundle`), before serialization. Context: `{request, durationMs}` where `durationMs` is the whole bundle, from the guards passing to the finished envelope.
@@ -96,6 +97,16 @@ import {toKoaMiddleware} from 'double-meh-bundler/koa.js';
 const app = new Koa();
 app.use(route.put('/bundle', toKoaMiddleware(createBundler({isUrlAcceptable}))));
 ```
+
+Streamed responses (`application/vnd.double-meh.bundle+jsonl`):
+
+- Negotiated by the client naming the type in `Accept`; matching is an exact essence comparison per entry, because `BUNDLE_MIME` is a string prefix of `BUNDLE_JSONL_MIME` and a `startsWith` test would confuse them. Exported as `BUNDLE_JSONL_MIME`.
+- Framing: line 1 is the envelope header `{"v":1}`; every later line is exactly one part in the unchanged v1 part shape. `v` stays 1 — the framing changed, not the parts — and the content type is what distinguishes the two forms.
+- Parts are written as their upstreams complete, so they arrive in completion order rather than request order; correlation is by `id`, which the format has always required. Base64 parts are still held to the end of the stream (text-first locality outranks early binary delivery).
+- Protocol guards (405, 400) answer before any stream opens, so an error is always a normal buffered `problem+json` response.
+- Hooks: `processResult` applies before a part is written; `onItemFinish` fires per written part; `onBundleFinish` fires after the last line with the parts in shipped order. `processBundle` cannot apply to a stream and therefore disables streaming rather than being skipped — a configured transform may be redacting, so silently dropping it would be worse than not streaming.
+- A part that cannot be serialized (a `processResult` returning something with a cycle) becomes a synthetic 500 line rather than breaking the stream.
+- Compression: per-part flushing is required for parts to actually arrive early, and costs +25% bytes at 10 parts / +57% at 50 versus one-shot gzip of the buffered envelope. The node adapter switches to `Z_SYNC_FLUSH` automatically for `+jsonl` responses; Koa users must pass `{gzip: {flush: constants.Z_SYNC_FLUSH}}` to `koa-compress`.
 
 ## Wire format v1 (normative summary)
 

@@ -2,6 +2,7 @@
 
 export const REQUEST_MIME = 'application/vnd.double-meh.bundle-request+json';
 export const BUNDLE_MIME = 'application/vnd.double-meh.bundle+json';
+export const BUNDLE_JSONL_MIME = 'application/vnd.double-meh.bundle+jsonl';
 
 // the whitelist that rides per part; auth/cookies propagate from the outer request only
 const PART_HEADERS = ['accept', 'accept-language', 'if-none-match', 'if-modified-since'];
@@ -37,6 +38,12 @@ const synthetic = (part, url, status, message) => ({
   body: message
 });
 
+// exact essence match per entry: BUNDLE_MIME is a string prefix of BUNDLE_JSONL_MIME
+const acceptsJsonl = request =>
+  (request.headers.get('accept') || '')
+    .split(',')
+    .some(entry => entry.split(';')[0].trim() === BUNDLE_JSONL_MIME);
+
 // instrumentation must never change behavior: an observer's throw or rejection is swallowed
 const notify = (hook, ...args) => {
   if (!hook) return;
@@ -62,6 +69,7 @@ export const createBundler = (options = {}) => {
     fetch: upstream = globalThis.fetch,
     maxRequests = 20,
     partTimeout = 10000,
+    streaming = true,
     onBundleStart,
     onBundleFinish,
     onItemFinish,
@@ -183,6 +191,52 @@ export const createBundler = (options = {}) => {
     return part;
   };
 
+  const streamBundle = (doc, request, started) => {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream({
+      async start(controller) {
+        const shipped = onBundleFinish ? [] : null;
+        const line = part => {
+          let text;
+          try {
+            text = JSON.stringify(part);
+          } catch (error) {
+            // a transform can hand back something unserializable; one bad part never fails the rest
+            part = synthetic(
+              part,
+              String(part.url || ''),
+              500,
+              'unserializable part: ' + String((error && error.message) || error)
+            );
+            text = JSON.stringify(part);
+          }
+          controller.enqueue(encoder.encode(text + '\n'));
+          if (shipped) shipped.push(part);
+        };
+        controller.enqueue(encoder.encode(JSON.stringify({v: 1}) + '\n'));
+        const held = [];
+        await Promise.all(
+          doc.parts.map(async part => {
+            const result = await finishPart(part, request);
+            // base64 still flushes last: text parts stay contiguous in one compression window
+            if (/** @type {{encoding?: string}} */ (result).encoding === 'base64')
+              held.push(result);
+            else line(result);
+          })
+        );
+        for (const part of held) line(part);
+        if (onBundleFinish) {
+          const durationMs = performance.now() - started;
+          notify(onBundleFinish, {v: 1, parts: shipped}, {request, durationMs});
+        }
+        controller.close();
+      }
+    });
+    return new Response(body, {
+      headers: {'content-type': BUNDLE_JSONL_MIME, 'cache-control': 'no-store'}
+    });
+  };
+
   return async request => {
     if (request.method !== 'PUT' && request.method !== 'POST') {
       return new Response(null, {
@@ -204,6 +258,11 @@ export const createBundler = (options = {}) => {
     }
     const started = performance.now();
     notify(onBundleStart, {request, parts: doc.parts});
+    // processBundle needs the whole envelope, so it wins over streaming: silently skipping a
+    // configured transform (it may be redacting) would be worse than not streaming
+    if (streaming && !processBundle && acceptsJsonl(request)) {
+      return streamBundle(doc, request, started);
+    }
     const parts = await Promise.all(doc.parts.map(part => finishPart(part, request)));
     // binary parts sort last (stable): text parts stay contiguous in one compression window.
     // After processResult, so a transform that turns a part base64 still sorts where it belongs

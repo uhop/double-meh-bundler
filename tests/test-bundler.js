@@ -1,6 +1,6 @@
 import test from 'tape-six';
 
-import {createBundler, BUNDLE_MIME} from '../src/index.js';
+import {createBundler, BUNDLE_MIME, BUNDLE_JSONL_MIME} from '../src/index.js';
 
 const ORIGIN = 'https://api.internal';
 
@@ -27,6 +27,34 @@ const bundleRequest = (parts, init = {}) =>
   });
 
 const accept = () => true;
+
+async function* readLines(response) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for (;;) {
+    const {value, done} = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, {stream: true});
+    let index;
+    while ((index = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, index).trim();
+      buffer = buffer.slice(index + 1);
+      if (line) yield JSON.parse(line);
+    }
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) yield JSON.parse(buffer.trim());
+}
+
+const collectLines = async response => {
+  const records = [];
+  for await (const record of readLines(response)) records.push(record);
+  return records;
+};
+
+const streamRequest = (parts, init = {}) =>
+  bundleRequest(parts, {...init, headers: {accept: BUNDLE_JSONL_MIME, ...(init.headers || {})}});
 
 test('bundler: happy path — inline JSON parts, ids and urls echoed', async t => {
   const bundler = createBundler({
@@ -428,4 +456,185 @@ test('hooks: a non-function hook is refused at construction', async t => {
       t.ok(error.message.includes(name), name + ': naming the option');
     }
   }
+});
+
+test('streaming: a jsonl Accept gets a header line then one part per line', async t => {
+  const bundler = createBundler({
+    isUrlAcceptable: accept,
+    fetch: upstreamOf({'/a': () => json({name: 'a'}), '/b': () => json({name: 'b'})})
+  });
+  const response = await bundler(
+    streamRequest([
+      {id: 'x', url: ORIGIN + '/a'},
+      {id: 'y', url: ORIGIN + '/b'}
+    ])
+  );
+  t.equal(response.status, 200, 'ok');
+  t.equal(response.headers.get('content-type'), BUNDLE_JSONL_MIME, 'jsonl MIME');
+  t.equal(response.headers.get('cache-control'), 'no-store', 'still never cacheable');
+  const records = await collectLines(response);
+  t.deepEqual(records[0], {v: 1}, 'the header line comes first');
+  t.equal(records.length, 3, 'header plus one line per part');
+  t.deepEqual(
+    records
+      .slice(1)
+      .map(part => part.id)
+      .sort(),
+    ['x', 'y'],
+    'both parts shipped'
+  );
+  t.deepEqual(records[1].headers['content-type'], 'application/json', 'parts keep the v1 shape');
+});
+
+test('streaming: parts flush as upstreams complete, not at the end', async t => {
+  let release;
+  const gate = new Promise(resolve => (release = resolve));
+  const bundler = createBundler({
+    isUrlAcceptable: accept,
+    fetch: upstreamOf({
+      '/fast': () => json({which: 'fast'}),
+      '/slow': async () => {
+        await gate;
+        return json({which: 'slow'});
+      }
+    })
+  });
+  const response = await bundler(
+    streamRequest([
+      {id: 'slow', url: ORIGIN + '/slow'},
+      {id: 'fast', url: ORIGIN + '/fast'}
+    ])
+  );
+  const iterator = readLines(response);
+  t.deepEqual((await iterator.next()).value, {v: 1}, 'header line');
+  // this await would never settle if the implementation buffered the whole bundle
+  const first = await iterator.next();
+  t.equal(first.value.id, 'fast', 'the fast part arrived while the slow upstream was pending');
+  release();
+  t.equal((await iterator.next()).value.id, 'slow', 'then the slow one');
+  t.ok((await iterator.next()).done, 'and the stream closed');
+});
+
+test('streaming: base64 parts still flush last', async t => {
+  const bytes = Uint8Array.from({length: 64}, (_, i) => i);
+  const bundler = createBundler({
+    isUrlAcceptable: accept,
+    fetch: upstreamOf({
+      '/img': () => new Response(bytes, {headers: {'content-type': 'application/octet-stream'}}),
+      '/data': () => json({after: 'binary'})
+    })
+  });
+  const records = await collectLines(
+    await bundler(
+      streamRequest([
+        {id: 'bin', url: ORIGIN + '/img'},
+        {id: 'txt', url: ORIGIN + '/data'}
+      ])
+    )
+  );
+  t.deepEqual(
+    records.slice(1).map(part => part.id),
+    ['txt', 'bin'],
+    'the binary part is held back to the end of the stream'
+  );
+  t.equal(records[2].encoding, 'base64', 'marked base64');
+});
+
+test('streaming: synthetic parts stream like any other', async t => {
+  const bundler = createBundler({
+    isUrlAcceptable: url => !url.includes('secret'),
+    fetch: upstreamOf({'/ok': () => json({fine: true})})
+  });
+  const records = await collectLines(
+    await bundler(
+      streamRequest([
+        {id: '1', url: ORIGIN + '/ok'},
+        {id: '2', url: ORIGIN + '/secret'}
+      ])
+    )
+  );
+  const refused = records.slice(1).find(part => part.id === '2');
+  t.equal(refused.status, 403, 'the refusal rode the stream');
+  t.ok(refused.synthetic, 'synthetically');
+});
+
+test('streaming: hooks fire per part and once at the end', async t => {
+  const items = [];
+  let finished;
+  const bundler = createBundler({
+    isUrlAcceptable: accept,
+    fetch: upstreamOf({'/a': () => json({name: 'a'}), '/b': () => json({name: 'b'})}),
+    onItemFinish: part => items.push(part.id),
+    onBundleFinish: (bundle, context) => (finished = [bundle, context])
+  });
+  await collectLines(
+    await bundler(
+      streamRequest([
+        {id: 'x', url: ORIGIN + '/a'},
+        {id: 'y', url: ORIGIN + '/b'}
+      ])
+    )
+  );
+  t.deepEqual(items.sort(), ['x', 'y'], 'onItemFinish fired per part');
+  t.equal(finished[0].parts.length, 2, 'onBundleFinish saw the shipped parts');
+  t.equal(finished[0].v, 1, 'as a v1 envelope');
+  t.ok(finished[1].durationMs >= 0, 'with a whole-bundle duration');
+});
+
+test('streaming: processResult transforms stream too', async t => {
+  const bundler = createBundler({
+    isUrlAcceptable: accept,
+    fetch: upstreamOf({'/a': () => json({secret: 1, keep: 2})}),
+    processResult: part => ({...part, body: {keep: part.body.keep}})
+  });
+  const records = await collectLines(await bundler(streamRequest([{id: 'x', url: ORIGIN + '/a'}])));
+  t.deepEqual(records[1].body, {keep: 2}, 'the transform applied before the line was written');
+});
+
+test('streaming: only an exact jsonl Accept opts in', async t => {
+  const bundler = createBundler({
+    isUrlAcceptable: accept,
+    fetch: upstreamOf({'/a': () => json({name: 'a'})})
+  });
+  const plain = await bundler(bundleRequest([{id: 'x', url: ORIGIN + '/a'}]));
+  t.ok(plain.headers.get('content-type').startsWith(BUNDLE_MIME), 'no Accept → buffered json');
+  // BUNDLE_MIME is a string prefix of BUNDLE_JSONL_MIME: a +json Accept must not opt in
+  const jsonOnly = await bundler(
+    bundleRequest([{id: 'x', url: ORIGIN + '/a'}], {headers: {accept: BUNDLE_MIME}})
+  );
+  t.equal(jsonOnly.headers.get('content-type'), BUNDLE_MIME, 'a +json Accept stays buffered');
+  const negotiated = await bundler(
+    bundleRequest([{id: 'x', url: ORIGIN + '/a'}], {
+      headers: {accept: BUNDLE_JSONL_MIME + ';q=1.0, ' + BUNDLE_MIME + ';q=0.5'}
+    })
+  );
+  t.equal(negotiated.headers.get('content-type'), BUNDLE_JSONL_MIME, 'q-params are tolerated');
+});
+
+test('streaming: streaming:false and processBundle both fall back to buffered json', async t => {
+  const off = createBundler({
+    isUrlAcceptable: accept,
+    streaming: false,
+    fetch: upstreamOf({'/a': () => json({name: 'a'})})
+  });
+  const offResponse = await off(streamRequest([{id: 'x', url: ORIGIN + '/a'}]));
+  t.equal(offResponse.headers.get('content-type'), BUNDLE_MIME, 'streaming:false disables it');
+  const transformed = createBundler({
+    isUrlAcceptable: accept,
+    fetch: upstreamOf({'/a': () => json({name: 'a'})}),
+    processBundle: bundle => ({...bundle, servedBy: 'edge-1'})
+  });
+  const response = await transformed(streamRequest([{id: 'x', url: ORIGIN + '/a'}]));
+  t.equal(response.headers.get('content-type'), BUNDLE_MIME, 'processBundle wins over streaming');
+  const doc = await response.json();
+  t.equal(doc.servedBy, 'edge-1', 'and the transform still ran');
+});
+
+test('streaming: protocol guards still answer before any stream opens', async t => {
+  const bundler = createBundler({isUrlAcceptable: accept, fetch: () => json({}), maxRequests: 1});
+  const big = await bundler(streamRequest([{url: '/a'}, {url: '/b'}]));
+  t.equal(big.status, 400, 'oversized bundle refused as problem+json');
+  t.equal(big.headers.get('content-type'), 'application/problem+json', 'not as a stream');
+  const empty = await collectLines(await bundler(streamRequest([])));
+  t.deepEqual(empty, [{v: 1}], 'an empty bundle streams just the header');
 });
