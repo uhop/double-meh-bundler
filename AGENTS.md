@@ -1,8 +1,9 @@
 # AGENTS.md — double-meh-bundler
 
 > `double-meh-bundler` — the server side of the double-meh bundle protocol: a web-standard
-> fetch-handler core that fans one bundled request out to backend services and returns all
-> responses in a single compressed envelope. Zero runtime dependencies.
+> fetch-handler core that fans one bundled request out to backend services and returns every
+> response in one compressed envelope — or streamed part-by-part when the client negotiates it.
+> Zero runtime dependencies.
 
 For project structure see [ARCHITECTURE.md](./ARCHITECTURE.md). The wire format and the
 architectural decisions (fetch-handler core, duck-typed adapters, single package) are recorded in

@@ -1,7 +1,7 @@
 {
   "name": "double-meh-bundler",
   "version": "1.0.0",
-  "description": "Server-side bundler for the double-meh bundle protocol: one fetch-handler core, framework adapters as thin subpaths.",
+  "description": "Server-side bundler for the double-meh bundle protocol: one fetch-handler core, framework adapters as thin subpaths, buffered or streamed (JSON Lines) bundles.",
   "homepage": "https://github.com/uhop/double-meh-bundler#readme",
   "bugs": {
     "url": "https://github.com/uhop/double-meh-bundler/issues"
@@ -37,6 +37,9 @@
     "http",
     "bundler",
     "batching",
+    "streaming",
+    "jsonl",
+    "ndjson",
     "double-meh",
     "zero-dependency"
   ],

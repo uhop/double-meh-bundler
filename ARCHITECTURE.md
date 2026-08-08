@@ -1,7 +1,8 @@
 # Architecture
 
 `double-meh-bundler` implements the server obligations of the double-meh bundle protocol (wire
-format v1): parse a bundle request, fan out to upstream services, assemble one envelope.
+format v1): parse a bundle request, fan out to upstream services, assemble one envelope — or,
+when the client negotiates the `+jsonl` framing, flush parts as their upstreams complete.
 
 ## Project layout
 

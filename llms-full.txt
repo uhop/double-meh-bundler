@@ -1,6 +1,6 @@
 # double-meh-bundler — full reference
 
-> Server side of the double-meh bundle protocol. One bundled request in (many GETs as one PUT), one enveloped response out. Web-standard fetch-handler core; dependency-free duck-typed adapters. Zero runtime dependencies. ESM-only. Node >= 18 (code floor: web-standard `fetch`/`Request`/`Response` globals), Bun, Deno; the core runs anywhere a fetch handler does (service workers, edge runtimes).
+> Server side of the double-meh bundle protocol. One bundled request in (many GETs as one PUT), one enveloped response out — or, when the client negotiates `…bundle+jsonl`, a stream of parts flushed as their upstreams complete. Web-standard fetch-handler core; dependency-free duck-typed adapters. Zero runtime dependencies. ESM-only. Node >= 18 (code floor: web-standard `fetch`/`Request`/`Response` globals), Bun, Deno; the core runs anywhere a fetch handler does (service workers, edge runtimes).
 
 ## Why bundle
 

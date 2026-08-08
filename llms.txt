@@ -1,6 +1,6 @@
 # double-meh-bundler
 
-> Server side of the double-meh bundle protocol: accepts one bundled request (many GETs in one PUT), fans out to backend services, returns all responses in a single compressed envelope. The core is a web-standard fetch handler `(Request) => Promise<Response>`; framework adapters are thin, dependency-free subpaths. Zero runtime dependencies, ESM-only, Node >= 18 / Bun / Deno; the core also runs in service workers and edge runtimes.
+> Server side of the double-meh bundle protocol: accepts one bundled request (many GETs in one PUT), fans out to backend services, returns every response together — in one compressed envelope, or as a `+jsonl` stream of parts flushed as upstreams complete when the client negotiates it. The core is a web-standard fetch handler `(Request) => Promise<Response>`; framework adapters are thin, dependency-free subpaths. Zero runtime dependencies, ESM-only, Node >= 18 / Bun / Deno; the core also runs in service workers and edge runtimes.
 
 ## Install
 
@@ -39,7 +39,9 @@ import {createServer} from 'node:http';
 import {createBundler} from 'double-meh-bundler';
 import {toNodeHandler} from 'double-meh-bundler/node.js';
 
-createServer(toNodeHandler(createBundler({isUrlAcceptable}))).listen(3000);
+const bundle = toNodeHandler(createBundler({isUrlAcceptable}));
+// mount it on a route — the handler answers every request it is given
+createServer((req, res) => (req.url.startsWith('/bundle') ? bundle(req, res) : notFound(res))).listen(3000);
 // Express: app.put('/bundle', toNodeHandler(createBundler({isUrlAcceptable})));
 ```
 

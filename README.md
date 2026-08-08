@@ -3,7 +3,7 @@
 [npm-img]: https://img.shields.io/npm/v/double-meh-bundler.svg
 [npm-url]: https://npmjs.org/package/double-meh-bundler
 
-The server side of the [double-meh](https://github.com/uhop/double-meh) bundle protocol: accepts one bundled request, fans out to your services on the backend network, and returns all responses in a single compressed envelope. Many small JSON responses sharing one compression window is the payoff — measured ~40–48% fewer bytes on bursts of small responses — plus aggregation across origins that HTTP/2 multiplexing cannot do.
+The server side of the [double-meh](https://github.com/uhop/double-meh) bundle protocol: accepts one bundled request, fans out to your services on the backend network, and returns every response together — in one compressed envelope, or streamed part-by-part when the client asks. Many small JSON responses sharing one compression window is the payoff — measured ~40–48% fewer bytes on bursts of small responses — plus aggregation across origins that HTTP/2 multiplexing cannot do.
 
 The core is a **web-standard fetch handler** — usable directly with `Bun.serve`, `Deno.serve`, service workers, and web-handler frameworks; adapters for callback servers are thin subpaths with **zero framework dependencies**.
 
@@ -36,7 +36,11 @@ import {createServer} from 'node:http';
 import {createBundler} from 'double-meh-bundler';
 import {toNodeHandler} from 'double-meh-bundler/node.js';
 
-createServer(toNodeHandler(createBundler({isUrlAcceptable}))).listen(3000);
+const bundle = toNodeHandler(createBundler({isUrlAcceptable}));
+// mount it on a route — the handler answers every request it is given
+createServer((req, res) =>
+  req.url.startsWith('/bundle') ? bundle(req, res) : notFound(res)
+).listen(3000);
 // Express: app.put('/bundle', toNodeHandler(createBundler({isUrlAcceptable})));
 // Koa:     import {toKoaMiddleware} from 'double-meh-bundler/koa.js';
 //          app.use(route.put('/bundle', toKoaMiddleware(createBundler({isUrlAcceptable}))));
