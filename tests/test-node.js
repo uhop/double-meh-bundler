@@ -149,6 +149,49 @@ test('node adapter: a streamed bundle flushes parts through gzip', async t => {
   });
 });
 
+// fetch advertises gzip by default, so every other test here takes the compressed arm; these two
+// are the only cover for the plain one (a body to send, no compression applied)
+const rawPut = (base, headers) =>
+  new Promise((resolve, reject) => {
+    import('node:http').then(({request: httpRequest}) => {
+      const req = httpRequest(base + '/bundle', {method: 'PUT', headers}, res => {
+        const chunks = [];
+        res.on('data', chunk => chunks.push(chunk));
+        res.on('end', () => resolve({res, body: Buffer.concat(chunks)}));
+        res.on('error', reject);
+      });
+      req.on('error', reject);
+      req.end(DOC);
+    }, reject);
+  });
+
+test('node adapter: a client that declines gzip gets the plain body', async t => {
+  await withServer(bundlerHandler(), async base => {
+    const raw = await rawPut(base, {
+      'accept-encoding': 'identity',
+      'content-type': 'application/json'
+    });
+    t.equal(raw.res.statusCode, 200, 'ok');
+    t.equal(raw.res.headers['content-encoding'], undefined, 'nothing compressed');
+    const doc = JSON.parse(raw.body.toString());
+    t.deepEqual(doc.parts[0].body, {served: true}, 'the part decoded off the plain body');
+  });
+});
+
+test('node adapter: compress:false serves plain even to a gzip client', async t => {
+  const handler = toNodeHandler(
+    createBundler({isUrlAcceptable: () => true, fetch: () => json({served: true})}),
+    {compress: false}
+  );
+  await withServer(handler, async base => {
+    const raw = await rawPut(base, {'accept-encoding': 'gzip', 'content-type': 'application/json'});
+    t.equal(raw.res.statusCode, 200, 'ok');
+    t.equal(raw.res.headers['content-encoding'], undefined, 'the opt-out held');
+    const doc = JSON.parse(raw.body.toString());
+    t.deepEqual(doc.parts[0].body, {served: true}, 'the part decoded');
+  });
+});
+
 test('node adapter: protocol errors surface as-is', async t => {
   await withServer(bundlerHandler(), async base => {
     const response = await fetch(base + '/bundle', {method: 'GET'});

@@ -29,7 +29,10 @@ export const toNodeHandler = (handler, options = {}) => {
       const source = response.body
         ? Readable.fromWeb(/** @type {any} */ (response.body))
         : undefined;
-      if (compress && source && gzipRe.test(String(req.headers['accept-encoding'] || ''))) {
+      if (!source) {
+        res.writeHead(response.status, outHeaders);
+        res.end();
+      } else if (compress && gzipRe.test(String(req.headers['accept-encoding'] || ''))) {
         delete outHeaders['content-length'];
         outHeaders['content-encoding'] = 'gzip';
         res.writeHead(response.status, outHeaders);
@@ -39,8 +42,7 @@ export const toNodeHandler = (handler, options = {}) => {
         source.pipe(createGzip(streamed ? {flush: constants.Z_SYNC_FLUSH} : {})).pipe(res);
       } else {
         res.writeHead(response.status, outHeaders);
-        if (source) source.pipe(res);
-        else res.end();
+        source.pipe(res);
       }
     } catch (error) {
       if (typeof next === 'function') return void next(error);
